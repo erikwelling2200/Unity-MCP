@@ -1,0 +1,3 @@
+# The bundled server is verified by SHA-256 and must stay byte-identical: no line-ending conversion.
+win-x64/** -text
+*.patch -text

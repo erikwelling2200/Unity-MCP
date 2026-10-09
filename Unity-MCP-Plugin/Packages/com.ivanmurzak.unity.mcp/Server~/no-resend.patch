@@ -1,0 +1,74 @@
+diff --git a/McpPlugin.Server/src/Client/ClientUtils.cs b/McpPlugin.Server/src/Client/ClientUtils.cs
+index 3c59673..ade5b42 100644
+--- a/McpPlugin.Server/src/Client/ClientUtils.cs
++++ b/McpPlugin.Server/src/Client/ClientUtils.cs
+@@ -26,8 +26,10 @@ namespace com.IvanMurzak.McpPlugin.Server
+ {
+     public static class ClientUtils
+     {
+-        const int maxRetries = 10; // Maximum number of retries
+-        const int retryDelayMs = 1000; // Delay between retries in milliseconds
++        // Changefied patch: retries only cover "no plugin connected", e.g. during a domain reload, which takes
++        // longer than the original 10 x 1 s. A call the plugin received is never re-sent; see InvokeAsync.
++        const int maxRetries = 30; // Maximum number of waits for a plugin to connect
++        const int retryDelayMs = 1000; // Delay between those waits in milliseconds
+ 
+         // Thread-safe collection to store connected clients, grouped by hub type
+         static readonly ConcurrentDictionary<Type, ConcurrentDictionary<string, bool>> ConnectedClients = new();
+@@ -172,8 +174,6 @@ namespace com.IvanMurzak.McpPlugin.Server
+                 }
+ 
+                 var retryCount = 0;
+-                var sawClient = false;
+-                var sawTimeout = false;
+                 while (retryCount < maxRetries)
+                 {
+                     retryCount++;
+@@ -186,10 +186,9 @@ namespace com.IvanMurzak.McpPlugin.Server
+                     if (client == null)
+                     {
+                         logger.LogWarning("Invoke '{0}': No connected clients. Retrying [{1}/{2}]...", methodName, retryCount, maxRetries);
+-                        await Task.Delay(1000, cancellationToken); // Wait before retrying
++                        await Task.Delay(retryDelayMs, cancellationToken); // Wait for a plugin to connect
+                         continue;
+                     }
+-                    sawClient = true;
+ 
+                     if (logger.IsEnabled(LogLevel.Trace))
+                     {
+@@ -212,24 +211,21 @@ namespace com.IvanMurzak.McpPlugin.Server
+                         }
+                         catch (Exception ex)
+                         {
+-                            logger.LogError(ex, $"Invoke '{methodName}': Error invoking '{request}' on client '{connectionId}': {ex.Message}");
+-                            // RemoveCurrentClient(client);
+-                            await Task.Delay(50, cancellationToken); // Wait before retrying
+-                            continue;
++                            // Changefied patch: never re-send a call the plugin already received. Re-invoking
++                            // makes the editor run the tool a second time (a write applied twice, a script run twice).
++                            return ResponseData<TResponse>.Error(request.RequestID, $"Invoke '{methodName}': Error invoking '{request}' on client '{connectionId}': {ex.Message}", ResponseErrorKind.Internal)
++                                .Log(logger, ex: ex);
+                         }
+                     }
+ 
+-                    // Timeout occurred
+-                    sawTimeout = true;
+-                    logger.LogWarning($"Invoke '{methodName}': Timeout: Client '{connectionId}' did not respond in {dataArguments.PluginTimeoutMs} ms. Removing from ConnectedClients.");
+-                    // RemoveCurrentClient(client);
+-                    await Task.Delay(retryDelayMs, cancellationToken); // Wait before retrying
+-                    // Restart the loop to try again with a new client
++                    // Changefied patch: a timeout means the plugin is still busy with this call on its main thread.
++                    // Re-sending queues another copy behind it, and every later call then waits for the whole pile,
++                    // so fail this one call instead.
++                    return ResponseData<TResponse>.Error(request.RequestID, $"Invoke '{methodName}': Timeout: client '{connectionId}' did not respond in {dataArguments.PluginTimeoutMs} ms. The editor may still be running this call; it was not re-sent.", ResponseErrorKind.Timeout)
++                        .Log(logger);
+                 }
+-                var errorKind = sawTimeout
+-                    ? ResponseErrorKind.Timeout
+-                    : sawClient ? ResponseErrorKind.Internal : ResponseErrorKind.Unavailable;
+-                return ResponseData<TResponse>.Error(request.RequestID, $"Invoke '{methodName}': Failed to invoke '{request}' after {retryCount} retries.", errorKind)
++                // Only reached when no plugin connected within the wait; a call that reached the plugin returns above.
++                return ResponseData<TResponse>.Error(request.RequestID, $"Invoke '{methodName}': No plugin connected within {retryCount} x {retryDelayMs} ms.", ResponseErrorKind.Unavailable)
+                     .Log(logger);
+             }
+             catch (Exception ex)

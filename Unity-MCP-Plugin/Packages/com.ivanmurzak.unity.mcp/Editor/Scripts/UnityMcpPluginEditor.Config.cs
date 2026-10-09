@@ -120,6 +120,14 @@ namespace com.IvanMurzak.Unity.MCP
                     wasCreated = true;
                 }
 
+                if (config.MigrateUpstreamDefaultTimeout())
+                {
+                    _logger.LogInformation(
+                        "{method}: migrating TimeoutMs from the upstream default to <i>{timeout}</i> ms",
+                        nameof(GetOrCreateConfig), UnityConnectionConfig.DefaultTimeoutMs);
+                    wasCreated = true;
+                }
+
                 if (string.IsNullOrEmpty(config.LocalToken))
                 {
                     config.LocalToken = GenerateToken();

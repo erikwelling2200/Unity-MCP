@@ -181,6 +181,22 @@ namespace com.IvanMurzak.Unity.MCP
                 SetDefault();
             }
 
+            /// <summary>
+            /// Changefied patch: how long the server waits for the editor to answer one tool call. The upstream default
+            /// (<see cref="Consts.Hub.DefaultTimeoutMs"/>, 10 s) is shorter than an ordinary graph edit or script run on a
+            /// large project, and the bundled server reports a timeout instead of re-sending, so a short value now fails
+            /// calls that would have finished.
+            /// </summary>
+            public const int DefaultTimeoutMs = 120000;
+
+            /// <summary>Changefied patch: a config still holding the upstream default was never chosen by anyone.</summary>
+            public bool MigrateUpstreamDefaultTimeout()
+            {
+                if (TimeoutMs != Consts.Hub.DefaultTimeoutMs) return false;
+                TimeoutMs = DefaultTimeoutMs;
+                return true;
+            }
+
             public UnityConnectionConfig SetDefault()
             {
                 Host = DefaultHost;
@@ -194,7 +210,7 @@ namespace com.IvanMurzak.Unity.MCP
                 AuthOption = AuthOption.none;
                 ConnectionMode = ConnectionMode.Cloud;
                 LogLevel = LogLevel.Warning;
-                TimeoutMs = Consts.Hub.DefaultTimeoutMs;
+                TimeoutMs = DefaultTimeoutMs;
                 Tools = DefaultTools;
                 Prompts = DefaultPrompts;
                 Resources = DefaultResources;

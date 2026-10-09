@@ -147,6 +147,26 @@ namespace com.IvanMurzak.Unity.MCP.Editor
         /// </summary>
         public const string ServerVersion = "9.2.2";
 
+        /// <summary>
+        /// Changefied patch: the server is not downloaded but shipped in this package under
+        /// <c>Server~/&lt;rid&gt;/</c>, built from <see cref="ServerVersion"/> with a patch that stops it re-sending a
+        /// call the editor already received (see <c>Server~/BUILD.md</c>). This marker is what the <c>version</c> file
+        /// in <c>Library/mcp-server</c> holds, so a Library still carrying the official download, or an older bundled
+        /// build, reads as out of date and is replaced. Bump it whenever the bundled binary changes.
+        /// </summary>
+        public const string BundledServerBuild = ServerVersion + "-changefied.1";
+
+        /// <summary>Changefied patch: <c>Server~/&lt;rid&gt;</c> inside this package, the bundled server for this platform.</summary>
+        public static string BundledServerFolderPath
+        {
+            get
+            {
+                var package = UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(McpServerManager).Assembly)
+                    ?? throw new InvalidOperationException("The Unity-MCP package could not be located, so its bundled server cannot be found.");
+                return Path.GetFullPath(Path.Combine(package.resolvedPath, "Server~", PlatformName));
+            }
+        }
+
         public const string ExecutableName = "gamedev-mcp-server";
 
         public static string McpServerName
@@ -278,9 +298,9 @@ namespace com.IvanMurzak.Unity.MCP.Editor
             if (binaryVersion == null)
                 return false;
 
-            // Compared against the pinned shared-server version, NOT the plugin version —
-            // the cached binary is a GameDev-MCP-Server release.
-            return binaryVersion == ServerVersion;
+            // Changefied patch: compared against the bundled build, not the upstream release, so the official
+            // download of the same server version is replaced by the bundled one.
+            return binaryVersion == BundledServerBuild;
         }
 
         /// <param name="interactive">
@@ -452,61 +472,48 @@ namespace com.IvanMurzak.Unity.MCP.Editor
             string? archiveFilePath = null;
             try
             {
-                UnityEngine.Debug.Log($"Downloading GameDev-MCP-Server binary from: <color=yellow>{ExecutableZipUrl}</color>");
+                // Changefied patch: install the server bundled in this package instead of downloading the release.
+                // The bundled binary is built from the same server version with the no-resend patch (Server~/BUILD.md).
+                var bundledFolder = BundledServerFolderPath;
+                UnityEngine.Debug.Log($"Installing bundled GameDev-MCP-Server {BundledServerBuild} from: <color=yellow>{bundledFolder}</color>");
 
-                // Clear any prior failure + reflect the in-progress download in the status machine.
+                // Clear any prior failure + reflect the in-progress install in the status machine.
                 _lastDownloadError.Value = null;
                 SetDownloadingStatus();
 
                 var previousKeepServerRunning = UnityMcpPluginEditor.KeepServerRunning;
 
-                // Per-attempt UNIQUE temp archive path (mirrors the staging folder's Guid below). Even if a future
-                // caller bypasses the single-flight guard, two downloads target DIFFERENT files and can never
-                // collide on the same zip — the defensive, belt-and-suspenders half of the fix.
-                archiveFilePath = BuildArchiveFilePath();
-                UnityEngine.Debug.Log($"Temporary archive file path: <color=yellow>{archiveFilePath}</color>");
-
-                // Download the zip file from the GitHub release notes
-                using (var client = new WebClient())
+                var bundledBinary = Path.Combine(bundledFolder, ExecutableFullName);
+                if (!File.Exists(bundledBinary))
                 {
-                    await client.DownloadFileTaskAsync(ExecutableZipUrl, archiveFilePath);
-                }
-
-                // FAIL-CLOSED INTEGRITY GATE (verify-before-execute). The zip is on disk but UNTRUSTED. Before
-                // extracting or launching it, download the release's SHA256SUMS manifest (sibling of the zip URL
-                // under the same v<ServerVersion> tag), compute the downloaded zip's SHA256 (pure BCL), and
-                // compare against the manifest entry for THIS RID. On MISMATCH / MISSING entry / unparsable-or-
-                // unfetchable manifest we delete the temp zip and return WITHOUT extracting or launching — an
-                // unverified binary must NEVER be executed (a compromised release asset or a trusted-CA MITM
-                // would otherwise yield arbitrary code execution; issue #841).
-                if (!await VerifyDownloadedArchive(archiveFilePath, ServerVersion, ExecutableZipName))
-                {
-                    try { File.Delete(archiveFilePath); } catch { /* best effort */ }
                     return FailDownload(
-                        "Checksum verification failed for the downloaded server binary (see logs).", unattended);
+                        $"No bundled server for {PlatformName}: '{ExecutableFullName}' is missing from {bundledFolder}. " +
+                        "Build one as described in Server~/BUILD.md.", unattended);
                 }
 
-                // Unpack zip archive into a SAME-VOLUME staging root (a sibling of the cache root, so the final
-                // publish is an atomic rename, never a cross-volume copy that could be interrupted mid-write).
-                // The shared GameDev-MCP-Server release zips are NOT layout-uniform: the win zips are FLAT
-                // (gamedev-mcp-server.exe + its sidecar files at the zip root) while the osx/linux zips wrap
-                // everything in a <rid>/ folder. Extract, FIND the binary wherever it landed, prepare the
-                // payload folder, then atomically Move it into the per-platform cache folder — so BOTH layouts
-                // (and any future re-arrangement) resolve correctly. The sidecar files (appsettings.json,
-                // NLog.config, server.json, ...) are LOAD-BEARING and must travel with the binary.
+                // Verify-before-execute, against our own build: the expected SHA-256 is committed next to the binary,
+                // so a binary that was swapped or corrupted after the build is refused instead of launched.
+                var expectedHashPath = bundledBinary + ".sha256";
+                var expectedHash = File.Exists(expectedHashPath) ? File.ReadAllText(expectedHashPath).Trim().ToLowerInvariant() : null;
+                string actualHash;
+                using (var stream = File.OpenRead(bundledBinary))
+                using (var sha = SHA256.Create())
+                    actualHash = BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", string.Empty).ToLowerInvariant();
+                if (expectedHash != actualHash)
+                {
+                    return FailDownload(
+                        $"The bundled server failed its SHA-256 check (expected {expectedHash ?? "no " + Path.GetFileName(expectedHashPath)}, got {actualHash}). It was not installed.",
+                        unattended);
+                }
+
+                // Copy into a SAME-VOLUME staging root first, so the publish below stays a single atomic rename and
+                // the running server is never replaced by a half-copied folder. The package copy itself is never
+                // launched: a running exe locks its file, which would stop UPM from replacing the package folder.
                 stagingRoot = Path.GetFullPath($"{ExecutableFolderRootPath}-staging-{Guid.NewGuid():N}");
                 var extractFolder = Path.Combine(stagingRoot, "extract");
-                Directory.CreateDirectory(extractFolder);
-                UnityEngine.Debug.Log($"Unpacking GameDev-MCP-Server binary to staging: <color=yellow>{extractFolder}</color>");
-                ZipFile.ExtractToDirectory(archiveFilePath, extractFolder, overwriteFiles: true);
-                try { File.Delete(archiveFilePath); } catch { /* best effort */ }
+                CopyBundledFolder(bundledFolder, extractFolder);
 
-                var extractedBinary = FindExtractedBinary(extractFolder, ExecutableFullName);
-                if (extractedBinary == null)
-                {
-                    return FailDownload(
-                        $"'{ExecutableFullName}' not found inside the downloaded zip.", unattended);
-                }
+                var extractedBinary = Path.Combine(extractFolder, ExecutableFullName);
 
                 // The folder that holds the binary + its sidecars is the payload we publish.
                 var payloadFolder = Path.GetDirectoryName(extractedBinary)!;
@@ -521,7 +528,7 @@ namespace com.IvanMurzak.Unity.MCP.Editor
 
                 // Write the version marker INTO the staged payload, so the published per-RID folder is complete
                 // the instant it appears — there is no window where the binary exists without its version file.
-                File.WriteAllText(Path.Combine(payloadFolder, "version"), ServerVersion);
+                File.WriteAllText(Path.Combine(payloadFolder, "version"), BundledServerBuild);
 
                 // Fix A (version-aware server restart, 07 §7.1): when a server is currently Running/Starting, STOP
                 // it and await Stopped (bounded) BEFORE the binary folder is deleted. Otherwise the live server
@@ -583,7 +590,7 @@ namespace com.IvanMurzak.Unity.MCP.Editor
                 if (outcome == ServerUpdateRestartOutcome.PublishFailed)
                     return FailDownload(publishFailReason ?? "The published server binary failed verification.", unattended);
 
-                UnityEngine.Debug.Log($"Downloaded and unpacked GameDev-MCP-Server binary to: <color=green>{ExecutableFullPath}</color>");
+                UnityEngine.Debug.Log($"Installed bundled GameDev-MCP-Server {BundledServerBuild} to: <color=green>{ExecutableFullPath}</color>");
                 UnityEngine.Debug.Log($"MCP server version file created at: <color=green><b>COMPLETED</b></color>");
 
                 // Restart is handled inside the orchestrator when restartAfterPublish is true. When it is false,
@@ -627,6 +634,22 @@ namespace com.IvanMurzak.Unity.MCP.Editor
                     catch { /* best effort */ }
                 }
             }
+        }
+
+        /// <summary>
+        /// Changefied patch: copies the bundled server folder into staging, skipping the <c>.sha256</c> files that only
+        /// exist to verify the package copy.
+        /// </summary>
+        static void CopyBundledFolder(string source, string destination)
+        {
+            Directory.CreateDirectory(destination);
+            foreach (var file in Directory.GetFiles(source))
+            {
+                if (file.EndsWith(".sha256", StringComparison.OrdinalIgnoreCase)) continue;
+                File.Copy(file, Path.Combine(destination, Path.GetFileName(file)), overwrite: true);
+            }
+            foreach (var directory in Directory.GetDirectories(source))
+                CopyBundledFolder(directory, Path.Combine(destination, Path.GetFileName(directory)));
         }
 
         // --- Version-aware server restart orchestration (Fix A, 07 §7.1) ---
