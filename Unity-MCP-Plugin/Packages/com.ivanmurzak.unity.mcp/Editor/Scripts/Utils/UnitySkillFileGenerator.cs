@@ -50,6 +50,23 @@ namespace com.IvanMurzak.Unity.MCP.Editor.Utils
         /// </summary>
         public override bool IncludeInputSchemaPropertyDescriptions => false;
 
+        /// <summary>
+        /// SKILL.md files are committed to the consuming project. StringBuilder.AppendLine emits CRLF on
+        /// Windows, while descriptions carry plain LF, so every regeneration (each domain reload) wrote
+        /// mixed endings that git sees as a size change and lists as modified with no content diff.
+        /// Emitting LF only makes the regenerated file byte-identical to an LF checkout.
+        /// </summary>
+        protected override string BuildMarkdown(IRunTool tool, string skillName, string host)
+        {
+            return base.BuildMarkdown(tool, skillName, host).Replace("\r\n", "\n");
+        }
+
+        /// <inheritdoc cref="BuildMarkdown"/>
+        protected override string BuildSkillContentMarkdown(ISkillContent skill, string skillName)
+        {
+            return base.BuildSkillContentMarkdown(skill, skillName).Replace("\r\n", "\n");
+        }
+
         /// <inheritdoc/>
         protected override void BuildHowToCallHeading(StringBuilder sb)
         {
