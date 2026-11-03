@@ -27,5 +27,22 @@ namespace com.IvanMurzak.Unity.MCP.Editor.Utils
             UnityEditor.EditorApplication.RepaintAnimationWindow();
             UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
         }
+
+        static System.Reflection.MethodInfo? savePrefabMethod;
+
+        /// <summary>
+        /// Saves a prefab stage the way the editor's own Save button does, so <see cref="UnityEditor.SceneManagement.PrefabStage.prefabSaving"/>
+        /// and <see cref="UnityEditor.SceneManagement.PrefabStage.prefabSaved"/> fire. A plain <c>PrefabUtility.SaveAsPrefabAsset</c>
+        /// raises neither, so editor-only state that listeners strip on save (such as localization preview text) is written into the asset.
+        /// </summary>
+        public static void SavePrefabStage(UnityEditor.SceneManagement.PrefabStage prefabStage)
+        {
+            savePrefabMethod ??= typeof(UnityEditor.SceneManagement.PrefabStage).GetMethod("SavePrefab",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic, null, System.Type.EmptyTypes, null)
+                ?? throw new System.MissingMethodException(typeof(UnityEditor.SceneManagement.PrefabStage).FullName, "SavePrefab");
+
+            if (!(bool)savePrefabMethod.Invoke(prefabStage, null))
+                throw new System.InvalidOperationException($"Saving prefab stage '{prefabStage.assetPath}' failed.");
+        }
     }
 }

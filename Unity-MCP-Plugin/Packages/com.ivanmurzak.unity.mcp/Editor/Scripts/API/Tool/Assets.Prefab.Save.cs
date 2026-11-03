@@ -35,7 +35,8 @@ namespace com.IvanMurzak.Unity.MCP.Editor.API
             "Use it when you are in prefab editing mode in Unity Editor. " +
             "Use '" + AssetsPrefabOpenToolId + "' tool to open a prefab first.\n\n" +
             "## Behavior\n\n" +
-            "Calls `PrefabUtility.SaveAsPrefabAsset` on the current prefab stage's contents root, clears the stage's " +
+            "Saves the current prefab stage the way the editor's Save button does (raising `PrefabStage.prefabSaving` and " +
+            "`prefabSaved`, so save-time strips of editor preview state run), clears the stage's " +
             "dirtiness flag, repaints editor windows, and returns an `AssetObjectRef` to the saved prefab. " +
             "Throws when no prefab stage is currently open.")]
         [Description("Save a prefab. " +
@@ -54,7 +55,7 @@ namespace com.IvanMurzak.Unity.MCP.Editor.API
             var assetPath = prefabStage.assetPath;
             var goName = prefabGo.name;
 
-            PrefabUtility.SaveAsPrefabAsset(prefabGo, assetPath);
+            EditorUtils.SavePrefabStage(prefabStage);
             prefabStage.ClearDirtiness();
 
             EditorUtils.RepaintAllEditorWindows();
