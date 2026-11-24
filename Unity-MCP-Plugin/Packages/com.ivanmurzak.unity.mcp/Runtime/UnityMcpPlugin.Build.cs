@@ -170,6 +170,21 @@ namespace com.IvanMurzak.Unity.MCP
 
         protected virtual void ApplyConfigToMcpPlugin(IMcpPlugin mcpPlugin)
         {
+            // Every feature this switches makes the hub notify the server, and on the build path the hub is not
+            // connected yet, so each of those notifications warns "connection not available".
+            UnityLogger.hubDisconnectExpected = true;
+            try
+            {
+                ApplyFeatureStates(mcpPlugin);
+            }
+            finally
+            {
+                UnityLogger.hubDisconnectExpected = false;
+            }
+        }
+
+        void ApplyFeatureStates(IMcpPlugin mcpPlugin)
+        {
             _logger.LogTrace("{method} called.", nameof(ApplyConfigToMcpPlugin));
 
             // Enable/Disable tools based on config

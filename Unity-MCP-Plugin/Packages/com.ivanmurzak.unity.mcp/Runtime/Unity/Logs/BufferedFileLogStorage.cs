@@ -49,7 +49,7 @@ namespace com.IvanMurzak.Unity.MCP
         {
             if (_isDisposed.Value)
             {
-                _logger.LogWarning("{method} called but already disposed, ignored.",
+                _logger.LogDebug("{method} called but already disposed, ignored.",
                     nameof(Flush));
                 return;
             }
@@ -70,7 +70,7 @@ namespace com.IvanMurzak.Unity.MCP
         {
             if (_isDisposed.Value)
             {
-                _logger.LogWarning("{method} called but already disposed, ignored.",
+                _logger.LogDebug("{method} called but already disposed, ignored.",
                     nameof(FlushAsync));
                 return Task.CompletedTask;
             }

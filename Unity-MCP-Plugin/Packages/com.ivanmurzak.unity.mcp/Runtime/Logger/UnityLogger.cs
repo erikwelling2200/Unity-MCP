@@ -22,6 +22,19 @@ namespace com.IvanMurzak.Unity.MCP.Utils
         readonly string _categoryName;
         readonly string _categoryColor;
 
+        /// <summary>
+        ///     While true, warnings from the client hub are logged at Debug. Set around work that is known to talk to
+        ///     the hub before it can be connected (applying the tool config at startup, which notifies the server of
+        ///     every tool it switches), so those expected "connection not available" lines do not read as faults.
+        ///     Thread-static: it only covers what runs synchronously inside that work.
+        /// </summary>
+        [ThreadStatic] internal static bool hubDisconnectExpected;
+
+        [UnityEngine.RuntimeInitializeOnLoadMethod(UnityEngine.RuntimeInitializeLoadType.SubsystemRegistration)]
+        static void ResetStatics() => hubDisconnectExpected = false;
+
+        const string HubCategory = "McpManagerClientHub";
+
         // Colors that look good on dark gray background
         private static readonly string[] CategoryColors = new[]
         {
@@ -78,6 +91,9 @@ namespace com.IvanMurzak.Unity.MCP.Utils
 
         public void Log<TState>(LogLevelMicrosoft logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
         {
+            if (hubDisconnectExpected && logLevel == LogLevelMicrosoft.Warning && _categoryName == HubCategory)
+                logLevel = LogLevelMicrosoft.Debug;
+
             if (!IsEnabled(logLevel)) return;
 
             if (formatter == null) throw new ArgumentNullException(nameof(formatter));
